@@ -8,7 +8,7 @@ import re
 from typing import TYPE_CHECKING, Optional
 
 import frappe
-from frappe import _, get_module_path
+from frappe import _, cstr, get_module_path
 from frappe.core.doctype.access_log.access_log import make_access_log
 from frappe.core.doctype.document_share_key.document_share_key import is_expired
 from frappe.utils import cint, escape_html, strip_html
@@ -53,7 +53,6 @@ def get_context(context):
 		doctype=frappe.form_dict.doctype, document=frappe.form_dict.name, file_type="PDF", method="Print"
 	)
 
-	print_style = None
 	body = get_rendered_template(
 		doc,
 		print_format=print_format,
@@ -69,12 +68,15 @@ def get_context(context):
 		"body": body,
 		"print_style": print_style,
 		"comment": frappe.session.user,
-		"title": frappe.utils.strip_html(doc.get_title() or doc.name),
+		"title": frappe.utils.strip_html(cstr(doc.get_title() or doc.name)),
 		"lang": frappe.local.lang,
 		"layout_direction": "rtl" if is_rtl() else "ltr",
 		"doctype": frappe.form_dict.doctype,
 		"name": frappe.form_dict.name,
 		"key": frappe.form_dict.get("key"),
+		"print_format": getattr(print_format, "name", None),
+		"letterhead": letterhead,
+		"no_letterhead": frappe.form_dict.no_letterhead,
 	}
 
 
@@ -349,14 +351,17 @@ def get_rendered_raw_commands(doc: str, name: str | None = None, print_format: s
 
 def validate_print_permission(doc):
 	for ptype in ("read", "print"):
-		if frappe.has_permission(doc.doctype, ptype, doc) or frappe.has_website_permission(doc):
+		if frappe.has_permission(doc.doctype, ptype, doc):
 			return
 
-	key = frappe.form_dict.key
-	if key and isinstance(key, str):
+	if frappe.has_website_permission(doc):
+		return
+
+	if (key := frappe.form_dict.key) and isinstance(key, str):
 		validate_key(key, doc)
-	else:
-		raise frappe.PermissionError(_("You do not have permission to view this document"))
+		return
+
+	frappe.throw(_("{0} {1} not found").format(_(doc.doctype), doc.name), frappe.DoesNotExistError)
 
 
 def validate_key(key, doc):

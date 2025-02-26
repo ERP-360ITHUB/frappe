@@ -2,6 +2,7 @@
 # License: MIT. See LICENSE
 import datetime
 import json
+import threading
 
 import frappe
 import frappe.desk.query_report
@@ -45,6 +46,7 @@ class Report(Document):
 		report_script: DF.Code | None
 		report_type: DF.Literal["Report Builder", "Query Report", "Script Report", "Custom Report"]
 		roles: DF.Table[HasRole]
+		timeout: DF.Int
 
 	# end: auto-generated types
 	def validate(self):
@@ -156,6 +158,14 @@ class Report(Document):
 		res = []
 
 		start_time = datetime.datetime.now()
+		prepared_report_watcher = None
+		if not self.prepared_report:
+			prepared_report_watcher = threading.Timer(
+				interval=threshold,
+				function=enable_prepared_report,
+				kwargs={"report": self.name, "site": frappe.local.site},
+			)
+			prepared_report_watcher.start()
 
 		# The JOB
 		if self.is_standard == "Yes":
@@ -163,10 +173,8 @@ class Report(Document):
 		else:
 			res = self.execute_script(filters)
 
-		# automatically set as prepared
+		prepared_report_watcher and prepared_report_watcher.cancel()
 		execution_time = (datetime.datetime.now() - start_time).total_seconds()
-		if execution_time > threshold and not self.prepared_report:
-			frappe.enqueue(enable_prepared_report, report=self.name)
 
 		frappe.cache.hset("report_execution_time", self.name, execution_time)
 
@@ -414,5 +422,9 @@ def get_group_by_column_label(args, meta):
 	return label
 
 
-def enable_prepared_report(report: str):
+def enable_prepared_report(report: str, site: str):
+	frappe.init(site)
+	frappe.connect()
 	frappe.db.set_value("Report", report, "prepared_report", 1)
+	frappe.db.commit()
+	frappe.destroy()

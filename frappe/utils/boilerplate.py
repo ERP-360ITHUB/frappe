@@ -98,7 +98,11 @@ def is_valid_title(title) -> bool:
 
 def get_license_options() -> list[str]:
 	url = "https://api.github.com/licenses"
-	res = requests.get(url=url)
+	try:
+		res = requests.get(url=url)
+	except requests.exceptions.RequestException:
+		return ["agpl-3.0", "gpl-3.0", "mit", "custom"]
+
 	if res.status_code == 200:
 		res = res.json()
 		ids = [r.get("spdx_id") for r in res]
@@ -109,7 +113,10 @@ def get_license_options() -> list[str]:
 
 def get_license_text(license_name: str) -> str:
 	url = f"https://api.github.com/licenses/{license_name.lower()}"
-	res = requests.get(url=url)
+	try:
+		res = requests.get(url=url)
+	except requests.exceptions.RequestException:
+		return "No license text found"
 	if res.status_code == 200:
 		res = res.json()
 		return res.get("body")
@@ -330,7 +337,22 @@ app_publisher = "{app_publisher}"
 app_description = "{app_description}"
 app_email = "{app_email}"
 app_license = "{app_license}"
+
+# Apps
+# ------------------
+
 # required_apps = []
+
+# Each item in the list will be shown as an app in the apps page
+# add_to_apps_screen = [
+# 	{{
+# 		"name": "{app_name}",
+# 		"logo": "/assets/{app_name}/logo.png",
+# 		"title": "{app_title}",
+# 		"route": "/{app_name}",
+# 		"has_permission": "{app_name}.api.permission.has_app_permission"
+# 	}}
+# ]
 
 # Includes in <head>
 # ------------------
@@ -621,7 +643,7 @@ jobs:
           check-latest: true
 
       - name: Cache pip
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{{{ runner.os }}}}-pip-${{{{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}}}
@@ -633,7 +655,7 @@ jobs:
         id: yarn-cache-dir-path
         run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         id: yarn-cache
         with:
           path: ${{{{ steps.yarn-cache-dir-path.outputs.dir }}}}

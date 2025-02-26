@@ -118,8 +118,10 @@ def generate_pot(target_app: str | None = None):
 	:param target_app: If specified, limit to `app`
 	"""
 
+	is_gitignored = get_is_gitignored_function_for_app(target_app)
+
 	def directory_filter(dirpath: str | os.PathLike[str]) -> bool:
-		if "public/dist" in dirpath:
+		if is_gitignored(str(dirpath)):
 			return False
 
 		subdir = os.path.basename(dirpath)
@@ -132,7 +134,7 @@ def generate_pot(target_app: str | None = None):
 	keywords["_lt"] = None
 
 	for app in apps:
-		app_path = frappe.get_pymodule_path(app)
+		app_path = frappe.get_pymodule_path(app, "..")
 		catalog = new_catalog(app)
 
 		# Each file will only be processed by the first method that matches,
@@ -150,6 +152,27 @@ def generate_pot(target_app: str | None = None):
 
 		pot_path = write_catalog(app, catalog)
 		print(f"POT file created at {pot_path}")
+
+
+def get_is_gitignored_function_for_app(app: str | None):
+	"""
+	Used to check if a directory is gitignored or not.
+	Can NOT be used to check if a file is gitignored or not.
+	"""
+	import git
+
+	if not app:
+		return lambda d: "public/dist" in d
+
+	repo = git.Repo(frappe.get_app_source_path(app), search_parent_directories=True)
+
+	def _check_gitignore(d: str):
+		d = d.rstrip("/")
+		if repo.ignored([d]):  # type: ignore
+			return True
+		return False
+
+	return _check_gitignore
 
 
 def new_po(locale, target_app: str | None = None):
@@ -307,3 +330,40 @@ def get_translations_from_mo(lang, app):
 
 def escape_percent(s: str):
 	return s.replace("%", "&#37;")
+
+
+def update_csv_from_po(app: str, locale: str):
+	"""Writes new strings from PO files to CSV
+
+	Steps:
+
+	1. Generate a POT file holding the app's translatable strings.
+	2. Update the PO file from the POT file. This removes all superfluos translations.
+	3. Read in the catalog from the PO file.
+	4. Read in the CSV file.
+	5. Remove all translations from the catalog that are already in the CSV.
+	6. Append the remaining translations from the catalog to the CSV file.
+	"""
+	generate_pot(app)
+	update_po(app, locale)
+
+	catalog = get_catalog(app, locale)
+	csv_file = Path(frappe.get_app_path(app)) / "translations" / f"{locale.replace('_', '-')}.csv"
+
+	if not csv_file.exists():
+		return
+
+	with open(csv_file) as f:
+		csv_translations = {(row[0], row[2] if len(row) > 2 else None): row[1] for row in csv.reader(f)}
+
+	for message in list(catalog):
+		if (message.id, message.context or "") in csv_translations or not message.string:
+			catalog.delete(message.id, message.context)
+
+	with open(csv_file, "a") as f:
+		writer = csv.writer(f)
+		for message in catalog._messages.values():
+			if message.id == message.string or message.id == message.context or not message.id.strip():
+				continue
+
+			writer.writerow([message.id, message.string, message.context or ""])
